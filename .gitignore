@@ -5,3 +5,4 @@
 **/*.rs.bk
 .commands.out.sh
 rls.toml
+/pkg
