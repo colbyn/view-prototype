@@ -1,20 +1,23 @@
+use std::fmt;
+use std::fmt::Debug;
+use std::convert::From;
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
-use serde::{self, Serialize, Deserialize};
 use std::collections::HashMap;
+use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::cell::{self, Cell, RefCell};
+use std::rc::Rc;
 use either::Either;
-
-///////////////////////////////////////////////////////////////////////////////
-// BASICS
-///////////////////////////////////////////////////////////////////////////////
-
-type GUID = usize;
-type HashId = usize;
+use serde::{self, Serialize, Deserialize};
+use web_sys::console;
+use wasm_bindgen::JsValue;
+use wasm_bindgen::closure;
+use wasm_bindgen::closure::Closure;
 
 
 ///////////////////////////////////////////////////////////////////////////////
-// DOM-TREE REPRESENTATION
+// HTML ATTRIBUTES
 ///////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Hash)]
@@ -49,6 +52,11 @@ impl Attribute {
         }
     }
 }
+
+
+///////////////////////////////////////////////////////////////////////////////
+// CSS STYLING
+///////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Hash)]
 pub enum Style {
@@ -87,13 +95,13 @@ impl Style {
             Style::PseudoClass(name, body) => None,
         }
     }
-    pub fn render_pseudo_selector(&self, css_hash: u64) -> Option<String> {
+    pub fn render_pseudo_selector(&self, node_id: &String) -> Option<String> {
         match &self {
             Style::Style{property, value: CssValue(value)} => None,
             Style::PseudoClass(pseudo_name, body) => {
                 let selector = format!(
-                    "._{css_hash}:{pseudo_name}",
-                    css_hash=css_hash,
+                    "#{id}:{pseudo_name}",
+                    id=node_id,
                     pseudo_name=pseudo_name,
                 );
                 Some(Style::render_decls(&selector, body))
@@ -103,52 +111,72 @@ impl Style {
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Hash)]
-pub struct CssValue(String);
+pub struct CssValue(pub String);
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Hash)]
-pub enum Node {
+
+///////////////////////////////////////////////////////////////////////////////
+// EVENTS
+///////////////////////////////////////////////////////////////////////////////
+
+#[derive(Clone)]
+pub struct Handler (pub Rc<Fn(JsValue)>);
+
+impl Handler {
+    pub fn eval(&self, arg: JsValue) {
+        match &self {
+            Handler(fun) => {
+                fun(arg);
+            }
+        }
+    }
+}
+
+impl Debug for Handler {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> fmt::Result {
+        write!(f, "Handler")
+    }
+}
+
+impl PartialEq for Handler {
+    fn eq(&self, other: &Handler) -> bool {true}
+}
+
+impl Hash for Handler {
+    fn hash<H: Hasher>(&self, state: &mut H) {}
+}
+
+
+
+
+///////////////////////////////////////////////////////////////////////////////
+// VIRTUAL-DOM NODE
+///////////////////////////////////////////////////////////////////////////////
+
+#[derive(Debug, PartialEq, Clone, Hash)]
+pub enum Html {
     Node {
         tag: String,
+        id: String,
         attributes: Vec<Attribute>,
         styling: Vec<(Style)>,
-        children: Vec<Node>,
+        events: BTreeMap<String, Handler>,
+        children: Vec<Html>,
     },
     Text {
         value: String,
     }
 }
 
-impl Node {
+impl Html {
     ///////////////////////////////////////////////////////////////////////////
     // INTERNAL HELPERS
     ///////////////////////////////////////////////////////////////////////////
-    fn stringify_attributes(&self) -> Option<String> {
-        fn set_hash_class(hash: u64, attributes: &mut Vec<Attribute>) {
-            let mut class_set = false;
-            for attr in attributes.iter_mut() {
-                match attr {
-                    Attribute::Pair{key, value} if key == "class" => {
-                        class_set = true;
-                        value.push_str(format!("_{hash}", hash=hash).as_str());
-                    },
-                    _ => ()
-                }
-            }
-            if !class_set {
-                attributes.push(
-                    Attribute::Pair{
-                        key: String::from("class"),
-                        value: format!("_{hash}", hash=hash),
-                    }
-                );
-            }
-        }
-        match (self.get_css_hash(), &self) {
-            (Some(hash), Node::Node{attributes,..}) => {
-                let mut attributes = attributes.clone();
-                set_hash_class(hash, &mut attributes);
+    fn render_attributes(&self) -> Option<String> {
+        match &self {
+            Html::Node{attributes,..} => {
                 let attributes: String = attributes
                     .iter()
+                    .filter(|atr| atr.key() != "id")
                     .map(|atr| {
                         if atr.is_pair() {
                             format!(
@@ -167,91 +195,178 @@ impl Node {
             _ => None
         }
     }
-    
-    
-    ///////////////////////////////////////////////////////////////////////////
-    // EXTERNAL API
-    ///////////////////////////////////////////////////////////////////////////
-    pub fn stringify_html(&self) -> String {
+    fn render_css(&self, style_mount: &StyleMount) {
+        pub fn default_selector(style_mount: &StyleMount, id: &String, styles: &Vec<Style>) {
+            let class_selector = format!("#{id}", id=id);
+            let rule = Style::render_decls(&class_selector, styles);
+            style_mount.insert(&rule);
+        }
+        pub fn pseudo_selectors(style_mount: &StyleMount, id: &String, styles: &Vec<Style>) {
+            let mut rules: Vec<String> = Vec::new();
+            for style in styles {
+                match style.render_pseudo_selector(id) {
+                    None => (),
+                    Some(rendered) => rules.push(rendered),
+                }
+            }
+            for rule in rules {
+                style_mount.insert(&rule);
+            }
+        }
         match &self {
-            Node::Node{tag, attributes, children,..} => {
-                let attributes: Option<String> = self.stringify_attributes();
+            Html::Node{styling, id, ..} => {
+                default_selector(style_mount, &id, styling);
+                pseudo_selectors(style_mount, &id, styling);
+            },
+            _ => ()
+        }
+    }
+    
+    fn add_event_listeners(&self) {
+        fn add_handler(element: &web_sys::Element, event_name: &str, handler: &Handler) {
+            use wasm_bindgen::JsCast;
+            
+            let element: web_sys::EventTarget = From::from(element.clone());
+            let closure: Closure<dyn FnMut(JsValue)> = Closure::wrap(Box::new({
+                let handler = handler.clone();
+                move |value: JsValue| {
+                    handler.eval(value);
+                }
+            }));
+            let function: &js_sys::Function = closure.as_ref().unchecked_ref();
+            let result = element.add_event_listener_with_callback(
+                event_name,
+                function,
+            );
+            closure.forget();
+            result.expect("unable to add event listener");
+        }
+        
+        match (self.get_live().as_ref(), &self) {
+            (Some(live), Html::Node{id, children, events, ..}) => {
+                for child in children {
+                    child.add_event_listeners();
+                }
+                for (event_name, event_handler) in events {
+                    add_handler(live, event_name, event_handler);
+                }
+            },
+            _ => ()
+        }
+    }
+    
+    
+    ///////////////////////////////////////////////////////////////////////////
+    // GETTER UTILS
+    ///////////////////////////////////////////////////////////////////////////
+    pub fn id(&self) -> Option<String> {
+        match &self {
+            Html::Node{id, ..} => Some(id.clone()),
+            Html::Text{..} => None,
+        }
+    }
+    fn events(&self) -> Option<BTreeMap<String, Handler>> {
+        match self {
+            Html::Node{events, ..} => Some(
+                events.clone()
+            ),
+            Html::Text{..} => None
+        }
+    }
+    
+    fn get_live(&self) -> Option<web_sys::Element> {
+        let window: web_sys::Window = web_sys::window()
+            .expect("window not available");
+        let document = window
+            .document()
+            .expect("document not available");
+        match self.id() {
+            Some(id) => {
+                document.get_element_by_id(id.as_str())
+            },
+            None => None
+        }
+    }
+    
+    
+    ///////////////////////////////////////////////////////////////////////////
+    // CONSTRUCTION
+    ///////////////////////////////////////////////////////////////////////////
+    pub fn new_node(tag: String) -> Html {
+        Html::Node {
+            tag: tag,
+            id: format!("_{}", rand::random::<u16>()),
+            attributes: Vec::new(),
+            styling: Vec::new(),
+            events: BTreeMap::new(),
+            children: Vec::new(),
+        }
+    }
+    
+    ///////////////////////////////////////////////////////////////////////////
+    // EXTERNAL - API
+    ///////////////////////////////////////////////////////////////////////////
+    pub fn render(&self, style_mount: &StyleMount) -> String {
+        match &self {
+            Html::Node{tag, id, attributes, children,..} => {
+                self.render_css(style_mount);
+                let attributes: Option<String> = self.render_attributes();
                 let children: String = children
                     .iter()
-                    .map(|c| c.stringify_html())
+                    .map(|c| c.render(style_mount))
                     .collect::<Vec<String>>()
-                    .join("\n");
+                    .join("");
                 
                 if attributes.is_none() {
                     format!(
-                        "<{tag}>{children}</{tag}>",
+                        "<{tag} id={id}>{children}</{tag}>",
+                        id=id,
                         tag=tag,
                         children=children,
                     )
                 } else {
                     format!(
-                        "<{tag} {attributes}>{children}</{tag}>",
+                        "<{tag} id={id} {attributes}>{children}</{tag}>",
+                        id=id,
                         tag=tag,
                         attributes=attributes.unwrap(),
                         children=children,
                     )
                 }
             }
-            Node::Text{value} => {value.clone()}
-        }
-    }
-    
-    pub fn get_css_hash(&self) -> Option<u64> {
-        match &self {
-            Node::Node{styling, ..} => Some(calculate_hash(&styling)),
-            Node::Text{..} => None,
-        }
-    }
-    
-    pub fn stringify_css(&self) -> Option<(u64, String)> {
-        let hash = self.get_css_hash();
-        match (hash, &self) {
-            (Some(hash), Node::Node{styling, ..}) => {
-                let class_selector = format!("._{hash}", hash=hash);
-                let class_decl = Style::render_decls(&class_selector, styling);
-                let pseudo_decls = {
-                    let mut contents: Vec<String> = Vec::new();
-                    for style in styling {
-                        match style.render_pseudo_selector(hash) {
-                            None => (),
-                            Some(rendered) => contents.push(rendered),
-                        }
-                    }
-                    contents.join(" ")
-                };
-                let result = format!("{}\n{}", class_decl, pseudo_decls);
-                Some((hash, result))
-            },
-            _ => None
+            Html::Text{value} => {value.clone()}
         }
     }
     pub fn add_attribute(&mut self, attribute: Attribute) {
         match self {
-            Node::Node{ref mut attributes, ..} => {
+            Html::Node{ref mut attributes, ..} => {
                 attributes.push(attribute);
             }
-            Node::Text{..} => {panic!()}
+            Html::Text{..} => {panic!()}
         }
     }
     pub fn add_style(&mut self, style: Style) {
         match self {
-            Node::Node{ref mut styling, ..} => {
+            Html::Node{ref mut styling, ..} => {
                 styling.push(style);
             }
-            Node::Text{..} => {panic!()}
+            Html::Text{..} => {panic!()}
         }
     }
-    pub fn add_child(&mut self, child: Node) {
+    pub fn add_event_handler(&mut self, event: String, handler: Handler) {
         match self {
-            Node::Node{ref mut children, ..} => {
+            Html::Node{ref mut events, ..} => {
+                events.insert(event, handler);
+            }
+            Html::Text{..} => {panic!()}
+        }
+    }
+    pub fn add_child(&mut self, child: Html) {
+        match self {
+            Html::Node{ref mut children, ..} => {
                 children.push(child);
             }
-            Node::Text{..} => {panic!()}
+            Html::Text{..} => {panic!()}
         }
     }
 }
@@ -285,247 +400,74 @@ pub mod css {
 
 
 ///////////////////////////////////////////////////////////////////////////////
-// VIEW MACRO
+// INTERNAL - DOM - VIEW-MOUNT POINT
 ///////////////////////////////////////////////////////////////////////////////
 
-macro_rules! attribute_value {
-    ($key:ident, true) => {
-        Attribute::Toggle{
-            key: String::from(stringify!($key)),
-            value: true,
+#[derive(Debug, Clone)]
+pub struct ViewMount {
+    mount: web_sys::Element,
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+// INTERNAL - DOM - STYLE-MOUNT POINT
+///////////////////////////////////////////////////////////////////////////////
+
+#[derive(Debug, Clone)]
+pub struct StyleMount {
+    mount: web_sys::HtmlStyleElement,
+}
+
+
+impl StyleMount {
+    pub fn new() -> Self {
+        StyleMount {
+            mount: mk_raw_style_mount(),
         }
-    };
-    ($key:ident, false) => {
-        Attribute::Toggle{
-            key: String::from(stringify!($key)),
-            value: false,
+    }
+    pub fn log(&self) {
+        let rules: web_sys::StyleSheet = self.mount.sheet().expect("missing sheet property");
+        let rules: wasm_bindgen::JsValue = std::convert::From::from(
+            self.mount.sheet().expect("missing sheet property")
+        );
+        let rules: web_sys::CssStyleSheet = std::convert::From::from(rules);
+        let rule_list: web_sys::CssRuleList = rules.css_rules().expect("missing cssRules property");
+        for ix in (1..rule_list.length()).map(|x| x - 1).rev() {
+            let rule: web_sys::CssRule = rule_list.item(ix).expect("rule index error");
+            let rule: wasm_bindgen::JsValue = std::convert::From::from(rule);
+            let rule: web_sys::CssStyleRule = std::convert::From::from(rule);
+            let selector = rule.selector_text();
+            console::log_1(&JsValue::from_str(
+                selector.as_str()
+            ))
         }
-    };
-    ($key:ident, $val:expr) => {
-        Attribute::Pair{
-            key: String::from(stringify!($key)),
-            value: $val.to_owned(),
+    }
+    pub fn delete(&self, node_id: String) {
+        let rules: web_sys::StyleSheet = self.mount.sheet().expect("missing sheet property");
+        let rules: wasm_bindgen::JsValue = std::convert::From::from(
+            self.mount.sheet().expect("missing sheet property")
+        );
+        let rules: web_sys::CssStyleSheet = std::convert::From::from(rules);
+        let rule_list: web_sys::CssRuleList = rules.css_rules().expect("missing cssRules property");
+        for ix in (1..rule_list.length()).map(|x| x - 1).rev() {
+            let rule: web_sys::CssRule = rule_list.item(ix).expect("rule index error");
+            let rule: wasm_bindgen::JsValue = std::convert::From::from(rule);
+            let rule: web_sys::CssStyleRule = std::convert::From::from(rule);
+            let selector = rule.selector_text();
+            if selector.contains(node_id.as_str()) {
+                rules.delete_rule(ix).expect("unable to delete css rule");
+            }
         }
-    };
+    }
+    pub fn insert(&self, contents: &String) {
+        let rules: web_sys::StyleSheet = self.mount.sheet().expect("missing sheet property");
+        let rules: wasm_bindgen::JsValue = std::convert::From::from(
+            self.mount.sheet().expect("missing sheet property")
+        );
+        let rules: web_sys::CssStyleSheet = std::convert::From::from(rules);
+        rules.insert_rule(contents.as_str()).expect("failed to insert rule");
+    }
 }
-
-
-
-macro_rules! view_argument {
-    ///////////////////////////////////////////////////////////////////////////
-    // ATTRIBUTE
-    ///////////////////////////////////////////////////////////////////////////
-    ($node:expr, $key:ident = $val:tt) => {
-        $node.add_attribute(attribute_value!($key, $val));
-    };
-
-    ///////////////////////////////////////////////////////////////////////////
-    // STYLE
-    ///////////////////////////////////////////////////////////////////////////
-    // CSS DECLARATION
-    ($node:expr, $key:ident : $val:expr) => {
-        $node.add_style(Style::Style{
-            property: String::from(stringify!($key)),
-            value: $val,
-        });
-    };
-    ($node:expr, $key:ident :: $val:tt) => {
-        $node.add_style(Style::Style{
-            property: String::from(stringify!($key)),
-            value: CssValue(String::from(
-                stringify!($val)
-            )),
-        });
-    };
-    // EMPTY PSEUDO-CLASS
-    ($node:expr, : $key:ident ()) => {
-        $node.add_style(Style::PseudoClass(
-            String::from(stringify!($key)),
-            Vec::new()
-        ));
-    };
-    // PSEUDO-CLASS
-    ($node:expr, : $key:ident $val:tt) => {{
-        let mut body: Vec<Style> = Vec::new();
-        style_properties_only_arguments!(body, $val);
-        $node.add_style(Style::PseudoClass(
-            String::from(stringify!($key)),
-            body
-        ));
-    }};
-
-    ///////////////////////////////////////////////////////////////////////////
-    // CHILDREN
-    ///////////////////////////////////////////////////////////////////////////
-    // TEXT NODE
-    ($node:expr, text $value:expr) => {
-        $node.add_child(
-            Node::Text{
-                value: $value.to_owned(),
-            }
-        );
-    };
-    // EMPTY NODE
-    ($node:expr, $key:ident ()) => {
-        $node.add_child(
-            Node::Node {
-                tag: String::from(stringify!($key)),
-                attributes: Vec::new(),
-                styling: Vec::new(),
-                children: Vec::new(),
-            }
-        );
-    };
-    // NODE
-    ($node:expr, $key:ident ($($body:tt)*)) => {{
-        let inner: Node = view!($key| $($body)*);
-        $node.add_child(inner);
-    }};
-}
-
-macro_rules! style_properties_only_arguments {
-    ///////////////////////////////////////////////////////////////////////////
-    // MANY
-    ///////////////////////////////////////////////////////////////////////////
-    ($list:expr, $key:ident : $val:expr, $($rest:tt)*) => {
-        $list.push(
-            Style::Style {
-                property: String::from(stringify!($key)),
-                value: $val,
-            }
-        );
-        style_properties_only_arguments!(
-            $list,
-            $($rest)*
-        );
-    };
-    ($list:expr, $key:ident :: $val:tt, $($rest:tt)*) => {
-        $list.push(
-            Style::Style {
-                property: String::from(stringify!($key)),
-                value: CssValue(String::from(
-                    stringify!($val)
-                )),
-            }
-        );
-        style_properties_only_arguments!(
-            $list,
-            $($rest)*
-        );
-    };
-    
-    ///////////////////////////////////////////////////////////////////////////
-    // SINGLE
-    ///////////////////////////////////////////////////////////////////////////
-    ($list:expr, $key:ident :: $val:tt) => {
-        $list.push(Style::Style {
-            property: String::from(stringify!($key)),
-            value: CssValue(String::from(
-                stringify!($val)
-            )),
-        });
-    };
-    ($list:expr, $key:ident : $val:expr) => {
-        $list.push(Style::Style {
-            property: String::from(stringify!($key)),
-            value: $val,
-        });
-    };
-    
-    ///////////////////////////////////////////////////////////////////////////
-    // INTERNAL - UNWRAP NESTED PARENS
-    ///////////////////////////////////////////////////////////////////////////
-    ($node:expr, ($($x:tt)*)) => {
-        style_properties_only_arguments!(
-            $node,
-            $($x)*
-        );
-    };
-}
-
-macro_rules! view_arguments {
-    ///////////////////////////////////////////////////////////////////////////
-    // MANY - ATTRIBUTE
-    ///////////////////////////////////////////////////////////////////////////
-    ($node:expr, $key:ident = $val:tt, $($rest:tt)*) => {
-        view_argument!($node, $key = $val);
-        view_arguments!(
-            $node,
-            $($rest)*
-        );
-    };
-    ///////////////////////////////////////////////////////////////////////////
-    // MANY - CSS
-    ///////////////////////////////////////////////////////////////////////////
-    // CSS DECLARATION
-    ($node:expr, $key:ident : $val:expr, $($rest:tt)*) => {
-        view_argument!($node, $key : $val);
-        view_arguments!(
-            $node,
-            $($rest)*
-        );
-    };
-    ($node:expr, $key:ident :: $val:tt, $($rest:tt)*) => {
-        view_argument!($node, $key :: $val);
-        view_arguments!(
-            $node,
-            $($rest)*
-        );
-    };
-    ($node:expr, : $key:ident $val:tt, $($rest:tt)*) => {
-        view_argument!($node, : $key $val);
-        view_arguments!(
-            $node,
-            $($rest)*
-        );
-    };
-    ///////////////////////////////////////////////////////////////////////////
-    // MANY - CHILDREN
-    ///////////////////////////////////////////////////////////////////////////
-    ($node:expr, $key:ident $val:tt, $($rest:tt)*) => {
-        view_argument!($node, $key $val);
-        view_arguments!(
-            $node,
-            $($rest)*
-        );
-    };
-    
-    ///////////////////////////////////////////////////////////////////////////
-    // SINGLE
-    ///////////////////////////////////////////////////////////////////////////
-    ($node:expr, $($rest:tt)*) => {
-        view_argument!(
-            $node,
-            $($rest)*
-        );
-    };
-}
-
-
-#[macro_export]
-macro_rules! view {
-    ($tag:ident| $($x:tt)*) => {{
-        let mut node = Node::Node {
-            tag: String::from(stringify!($tag)),
-            attributes: Vec::new(),
-            styling: Vec::new(),
-            children: Vec::new(),
-        };
-        view_arguments!(node, $($x)*);
-        node
-    }};
-    ($($x:tt)*) => {{
-        let mut node = Node::Node {
-            tag: String::from("div"),
-            attributes: Vec::new(),
-            styling: Vec::new(),
-            children: Vec::new(),
-        };
-        view_arguments!(node, $($x)*);
-        node
-    }};
-}
-
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -534,58 +476,28 @@ macro_rules! view {
 
 #[derive(Debug, Clone)]
 pub struct Reactor {
-    active_vnode: Node,
-    style_mount: web_sys::Element,
+    active_vnode: Html,
+    style_mount: StyleMount,
     view_mount: web_sys::Element,
 }
 
 
-impl Reactor {
+impl  Reactor {
     ///////////////////////////////////////////////////////////////////////////
     // INTERNAL HELPERS
     ///////////////////////////////////////////////////////////////////////////
-    fn init_mounts() -> (web_sys::Element, web_sys::Element) {
-        let window: web_sys::Window = web_sys::window()
-            .expect("window not available");
-        let document = window
-            .document()
-            .expect("document not available");
-        let body: web_sys::Node = std::convert::From::from(
-            document.body().expect("document.body not available")
-        );
-        let style_mount: web_sys::Node = std::convert::From::from(
-            document.create_element("style").unwrap()
-        );
-        let view_mount: web_sys::Node = std::convert::From::from(
-            document.create_element("div").unwrap()
-        );
-        body.append_child(&style_mount);
-        body.append_child(&view_mount);
-        let style_mount = {
-            let style_mount: wasm_bindgen::JsValue = std::convert::From::from(style_mount);
-            let style_mount: web_sys::Element = std::convert::From::from(style_mount);
-            style_mount
-        };
-        let view_mount = {
-            let view_mount: wasm_bindgen::JsValue = std::convert::From::from(view_mount);
-            let view_mount: web_sys::Element = std::convert::From::from(view_mount);
-            view_mount
-        };
-        (style_mount, view_mount)
-    }
-    
-    fn init_view(node: &Node, style_mount: &web_sys::Element, view_mount: &web_sys::Element) {
-        let markup = node.stringify_html();
-        let (hash, styles) = node.stringify_css().expect("initial css");
-        style_mount.set_inner_html(styles.as_str());
+    fn init_view(node: &Html, style_mount: &StyleMount, view_mount: &web_sys::Element) {
+        let markup = node.render(style_mount);
         view_mount.set_inner_html(markup.as_str());
+        node.add_event_listeners();
     }
     
     ///////////////////////////////////////////////////////////////////////////
     // EXTERNAL API
     ///////////////////////////////////////////////////////////////////////////
-    pub fn new(initial: Node) -> Self {
-        let (style_mount, view_mount) = Reactor::init_mounts();
+    pub fn new(initial: Html) -> Self {
+        let style_mount = StyleMount::new();
+        let view_mount = mk_raw_view_mount();
         Reactor::init_view(&initial, &style_mount, &view_mount);
         Reactor {
             active_vnode: initial,
@@ -607,6 +519,48 @@ fn calculate_hash<T: Hash>(t: &T) -> u64 {
     s.finish()
 }
 
+fn mk_raw_style_mount() -> web_sys::HtmlStyleElement {
+    let window: web_sys::Window = web_sys::window()
+        .expect("window not available");
+    let document = window
+        .document()
+        .expect("document not available");
+    let body: web_sys::Node = std::convert::From::from(
+        document.body().expect("document.body not available")
+    );
+    let style_mount: web_sys::Node = std::convert::From::from(
+        document.create_element("style").unwrap()
+    );
+    body.append_child(&style_mount);
+    let style_mount = {
+        let style_mount: wasm_bindgen::JsValue = std::convert::From::from(style_mount);
+        let style_mount: web_sys::HtmlStyleElement = std::convert::From::from(style_mount);
+        style_mount
+    };
+    style_mount
+}
+
+fn mk_raw_view_mount() -> web_sys::Element {
+    let window: web_sys::Window = web_sys::window()
+        .expect("window not available");
+    let document = window
+        .document()
+        .expect("document not available");
+    let body: web_sys::Node = std::convert::From::from(
+        document.body().expect("document.body not available")
+    );
+    let view_mount: web_sys::Node = std::convert::From::from(
+        document.create_element("div").unwrap()
+    );
+    body.append_child(&view_mount);
+    let view_mount = {
+        let view_mount: wasm_bindgen::JsValue = std::convert::From::from(view_mount);
+        let view_mount: web_sys::Element = std::convert::From::from(view_mount);
+        view_mount
+    };
+    view_mount
+}
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // DEV
@@ -614,19 +568,29 @@ fn calculate_hash<T: Hash>(t: &T) -> u64 {
 
 
 pub fn test() {
-    use web_sys::console;
-    use wasm_bindgen::JsValue;
+    #[macro_use]
+    use super::*;
     use css::value::*;
     
-    let node = view!(h1|
-        :hover (
-            color: hex("#999")
-        ),
-        color: hex("#000"),
-        display::flex,
-        justify_content::center,
-        text("Hello World")
+    let node = view!(
+        h1(
+            :hover (
+                color: hex("#999")
+            ),
+            color: hex("#000"),
+            display::flex,
+            justify_content::center,
+            .click(|event| {
+                console::log_1(&JsValue::from_str("event handler...."));
+                console::log_1(&event);
+            }),
+            text("Hello World")
+        )
     );
+    console::log_1(&JsValue::from(format!(
+        "{:#?}",
+        node
+    )));
     let mut reactor = Reactor::new(node);
 }
 

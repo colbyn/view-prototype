@@ -1,8 +1,6 @@
 {
-  "author": "Nick Fitzgerald <nfitzgerald@mozilla.com>",
-  "name": "create-rust-webpack",
-  "version": "0.2.0",
-  "repository": "https://github.com/rustwasm/rust-webpack-template",
+  "name": "view-prototype",
+  "version": "0.0.1",
   "license": "(MIT OR Apache-2.0)",
   "scripts": {
     "start": "webpack-dev-server -d",
