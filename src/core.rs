@@ -77,6 +77,7 @@ impl Style {
     pub fn render_decl(&self) -> Option<String> {
         match &self {
             Style::Style{property, value: CssValue(value)} => {
+                let property = property.replace("_", "-");
                 Some(format!(
                     "{prop}: {value};",
                     prop=property,
@@ -118,9 +119,34 @@ pub enum Node {
 }
 
 impl Node {
-    pub fn stringify_html(&self) -> String {
-        match &self {
-            Node::Node{tag, attributes, children,..} => {
+    ///////////////////////////////////////////////////////////////////////////
+    // INTERNAL HELPERS
+    ///////////////////////////////////////////////////////////////////////////
+    fn stringify_attributes(&self) -> Option<String> {
+        fn set_hash_class(hash: u64, attributes: &mut Vec<Attribute>) {
+            let mut class_set = false;
+            for attr in attributes.iter_mut() {
+                match attr {
+                    Attribute::Pair{key, value} if key == "class" => {
+                        class_set = true;
+                        value.push_str(format!("_{hash}", hash=hash).as_str());
+                    },
+                    _ => ()
+                }
+            }
+            if !class_set {
+                attributes.push(
+                    Attribute::Pair{
+                        key: String::from("class"),
+                        value: format!("_{hash}", hash=hash),
+                    }
+                );
+            }
+        }
+        match (self.get_css_hash(), &self) {
+            (Some(hash), Node::Node{attributes,..}) => {
+                let mut attributes = attributes.clone();
+                set_hash_class(hash, &mut attributes);
                 let attributes: String = attributes
                     .iter()
                     .map(|atr| {
@@ -136,13 +162,27 @@ impl Node {
                     })
                     .collect::<Vec<String>>()
                     .join(" ");
+                Some(attributes)
+            },
+            _ => None
+        }
+    }
+    
+    
+    ///////////////////////////////////////////////////////////////////////////
+    // EXTERNAL API
+    ///////////////////////////////////////////////////////////////////////////
+    pub fn stringify_html(&self) -> String {
+        match &self {
+            Node::Node{tag, attributes, children,..} => {
+                let attributes: Option<String> = self.stringify_attributes();
                 let children: String = children
                     .iter()
                     .map(|c| c.stringify_html())
                     .collect::<Vec<String>>()
                     .join("\n");
                 
-                if attributes.is_empty() {
+                if attributes.is_none() {
                     format!(
                         "<{tag}>{children}</{tag}>",
                         tag=tag,
@@ -152,7 +192,7 @@ impl Node {
                     format!(
                         "<{tag} {attributes}>{children}</{tag}>",
                         tag=tag,
-                        attributes=attributes,
+                        attributes=attributes.unwrap(),
                         children=children,
                     )
                 }
@@ -190,8 +230,6 @@ impl Node {
             _ => None
         }
     }
-    
-    
     pub fn add_attribute(&mut self, attribute: Attribute) {
         match self {
             Node::Node{ref mut attributes, ..} => {
@@ -490,80 +528,76 @@ macro_rules! view {
 
 
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // REACTOR
 ///////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Clone)]
 pub struct Reactor {
-    active: Option<Node>,
-    mount: web_sys::Element,
-}
-
-#[derive(Debug, Clone)]
-pub struct DomRef {
-    mount: web_sys::Element,
+    active_vnode: Node,
+    style_mount: web_sys::Element,
+    view_mount: web_sys::Element,
 }
 
 
-
-
-// impl Dom {
-//     ///////////////////////////////////////////////////////////////////////////
-//     // INTERNAL
-//     ///////////////////////////////////////////////////////////////////////////
-//     fn init(&mut self, active: Node) {
-//         let markup = active.stringify_html().as_str();
-//         let styles = active.stringify_css();
-// 
-// 
-//         // self.mount.set_inner_html("");
-//     }
-// 
-//     ///////////////////////////////////////////////////////////////////////////
-//     // EXTERNAL
-//     ///////////////////////////////////////////////////////////////////////////
-//     pub fn new(mount: Option<web_sys::Element>) -> Self {
-//         match mount {
-//             Some(e) => {
-//                 Dom {
-//                     active: None,
-//                     mount: e
-//                 }
-//             }
-//             None => {
-//                 let body: web_sys::HtmlElement = web_sys::window()
-//                     .expect("window not available")
-//                     .document()
-//                     .expect("Document not available")
-//                     .body()
-//                     .expect("Body not available");
-//                 let body: web_sys::Element = std::convert::From::from(body);
-//                 Dom {
-//                     active: None,
-//                     mount: body,
-//                 }
-//             }
-//         }
-//     }
-// 
-//     pub fn update(&mut self, new: Node) {
-//         match &self.active {
-//             None => {
-//                 self.init(new);
-//             }
-//             Some(old) => {
-//                 self.init(new);
-//             }
-//         }
-//     }
-// 
-// }
+impl Reactor {
+    ///////////////////////////////////////////////////////////////////////////
+    // INTERNAL HELPERS
+    ///////////////////////////////////////////////////////////////////////////
+    fn init_mounts() -> (web_sys::Element, web_sys::Element) {
+        let window: web_sys::Window = web_sys::window()
+            .expect("window not available");
+        let document = window
+            .document()
+            .expect("document not available");
+        let body: web_sys::Node = std::convert::From::from(
+            document.body().expect("document.body not available")
+        );
+        let style_mount: web_sys::Node = std::convert::From::from(
+            document.create_element("style").unwrap()
+        );
+        let view_mount: web_sys::Node = std::convert::From::from(
+            document.create_element("div").unwrap()
+        );
+        body.append_child(&style_mount);
+        body.append_child(&view_mount);
+        let style_mount = {
+            let style_mount: wasm_bindgen::JsValue = std::convert::From::from(style_mount);
+            let style_mount: web_sys::Element = std::convert::From::from(style_mount);
+            style_mount
+        };
+        let view_mount = {
+            let view_mount: wasm_bindgen::JsValue = std::convert::From::from(view_mount);
+            let view_mount: web_sys::Element = std::convert::From::from(view_mount);
+            view_mount
+        };
+        (style_mount, view_mount)
+    }
+    
+    fn init_view(node: &Node, style_mount: &web_sys::Element, view_mount: &web_sys::Element) {
+        let markup = node.stringify_html();
+        let (hash, styles) = node.stringify_css().expect("initial css");
+        style_mount.set_inner_html(styles.as_str());
+        view_mount.set_inner_html(markup.as_str());
+    }
+    
+    ///////////////////////////////////////////////////////////////////////////
+    // EXTERNAL API
+    ///////////////////////////////////////////////////////////////////////////
+    pub fn new(initial: Node) -> Self {
+        let (style_mount, view_mount) = Reactor::init_mounts();
+        Reactor::init_view(&initial, &style_mount, &view_mount);
+        Reactor {
+            active_vnode: initial,
+            style_mount: style_mount,
+            view_mount: view_mount,
+        }
+    }
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////
-// UTILS
+// INTERNAL UTILS
 ///////////////////////////////////////////////////////////////////////////////
 
 fn calculate_hash<T: Hash>(t: &T) -> u64 {
@@ -584,7 +618,7 @@ pub fn test() {
     use wasm_bindgen::JsValue;
     use css::value::*;
     
-    let content = view!(h1|
+    let node = view!(h1|
         :hover (
             color: hex("#999")
         ),
@@ -593,12 +627,7 @@ pub fn test() {
         justify_content::center,
         text("Hello World")
     );
-    console::log_1(&JsValue::from(format!(
-        "{}",
-        match content.stringify_css().unwrap() {
-            (_, x) => x
-        }
-    )));
+    let mut reactor = Reactor::new(node);
 }
 
 

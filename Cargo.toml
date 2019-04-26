@@ -8,7 +8,7 @@ edition = "2018"
 # crate-type = ["cdylib"]
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 futures = "0.1.26"
@@ -24,12 +24,14 @@ either = "1.5.2"
 ###############################################################################
 # RUST-WASM
 ###############################################################################
-js-sys = "0.3.19"
-wasm-bindgen = "0.2"
-console_error_panic_hook = { version = "0.1.1"}
+js-sys = {version="*", git = "https://github.com/rustwasm/wasm-bindgen.git", rev="cc891090046d07134c1f034a1bf03c43f3df9bad"}
+wasm-bindgen = {version="*", git = "https://github.com/rustwasm/wasm-bindgen.git", rev="cc891090046d07134c1f034a1bf03c43f3df9bad"}
+# console_error_panic_hook = { version = "0.1.1"}
 
 [dependencies.web-sys]
 version = "0.3.19"
+git = "https://github.com/rustwasm/wasm-bindgen.git"
+rev="cc891090046d07134c1f034a1bf03c43f3df9bad"
 features = [
     "console",
     "Comment",
@@ -42,6 +44,6 @@ features = [
     "NodeList",
     "Text",
     "CharacterData",
-    "Window",
+    "Window"
 ]
 
