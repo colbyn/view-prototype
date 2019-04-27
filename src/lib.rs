@@ -1,3 +1,5 @@
+// #![feature(impl_trait_in_bindings)]
+
 #![allow(dead_code, unused)]
 
 use wasm_bindgen::prelude::*;
@@ -6,7 +8,7 @@ use wasm_bindgen::JsValue;
 
 pub mod core;
 pub mod view_macro;
-
+pub mod css;
 
 #[wasm_bindgen]
 pub fn main() -> Result<(), JsValue> {

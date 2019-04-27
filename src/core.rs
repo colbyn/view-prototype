@@ -15,12 +15,14 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen::closure;
 use wasm_bindgen::closure::Closure;
 
+use crate::css;
+use crate::css::CssValue;
 
 ///////////////////////////////////////////////////////////////////////////////
 // HTML ATTRIBUTES
 ///////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Hash)]
+#[derive(Debug, PartialEq, Clone, Hash)]
 pub enum Attribute {
     Pair {
         key: String,
@@ -58,11 +60,11 @@ impl Attribute {
 // CSS STYLING
 ///////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Hash)]
+#[derive(Debug, PartialEq, Clone, Hash)]
 pub enum Style {
     Style {
         property: String,
-        value: CssValue,
+        value: String,
     },
     PseudoClass(String, Vec<Style>),
 }
@@ -84,7 +86,7 @@ impl Style {
     }
     pub fn render_decl(&self) -> Option<String> {
         match &self {
-            Style::Style{property, value: CssValue(value)} => {
+            Style::Style{property, value} => {
                 let property = property.replace("_", "-");
                 Some(format!(
                     "{prop}: {value};",
@@ -97,7 +99,7 @@ impl Style {
     }
     pub fn render_pseudo_selector(&self, node_id: &String) -> Option<String> {
         match &self {
-            Style::Style{property, value: CssValue(value)} => None,
+            Style::Style{..} => None,
             Style::PseudoClass(pseudo_name, body) => {
                 let selector = format!(
                     "#{id}:{pseudo_name}",
@@ -110,8 +112,8 @@ impl Style {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Hash)]
-pub struct CssValue(pub String);
+// #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Hash)]
+// pub struct CssValue(pub String);
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -372,32 +374,6 @@ impl Html {
 }
 
 
-///////////////////////////////////////////////////////////////////////////////
-// CSS VALUES
-///////////////////////////////////////////////////////////////////////////////
-pub mod css {
-    use super::*;
-    
-    pub mod value {
-        use super::*;
-        
-        ///////////////////////////////////////////////////////////////////////////
-        // COLORS
-        ///////////////////////////////////////////////////////////////////////////
-        pub fn rgb(r: u32, g: u32, b: u32) -> CssValue {
-            CssValue(format!(
-                "rgb({r},{g},{b})",
-                r=r,
-                g=g,
-                b=b,
-            ))
-        }
-        pub fn hex(x: &str) -> CssValue {
-            CssValue(x.to_owned())
-        }
-    }
-}
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // INTERNAL - DOM - VIEW-MOUNT POINT
@@ -570,17 +546,20 @@ fn mk_raw_view_mount() -> web_sys::Element {
 pub fn test() {
     #[macro_use]
     use super::*;
-    use css::value::*;
     
     let node = view!(
         h1(
             :hover (
-                color: hex("#999")
+                color: "#999"
             ),
-            color: hex("#000"),
-            display::flex,
-            justify_content::center,
-            .click(|event| {
+            color: "#000",
+            display: "flex",
+            justify_content: "center",
+            .click(move |event| {
+                console::log_1(&JsValue::from_str("event handler...."));
+                console::log_1(&event);
+            }),
+            .click(move |event| {
                 console::log_1(&JsValue::from_str("event handler...."));
                 console::log_1(&event);
             }),

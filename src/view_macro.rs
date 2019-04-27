@@ -8,6 +8,9 @@ use either::Either;
 use web_sys::console;
 use wasm_bindgen::JsValue;
 
+use crate::css;
+use crate::css::CssValue;
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // INTERNAL
@@ -48,19 +51,11 @@ macro_rules! view_argument {
     ///////////////////////////////////////////////////////////////////////////
     // STYLE
     ///////////////////////////////////////////////////////////////////////////
-    // CSS DECLARATION
+    // CSS RULE
     ($node:expr, $key:ident : $val:expr) => {
         $node.add_style(Style::Style{
             property: String::from(stringify!($key)),
-            value: $val,
-        });
-    };
-    ($node:expr, $key:ident :: $val:tt) => {
-        $node.add_style(Style::Style{
-            property: String::from(stringify!($key)),
-            value: CssValue(String::from(
-                stringify!($val)
-            )),
+            value: $val.stringify(),
         });
     };
     // EMPTY PSEUDO-CLASS
@@ -124,25 +119,12 @@ macro_rules! style_properties_only_arguments {
     ///////////////////////////////////////////////////////////////////////////
     // MANY
     ///////////////////////////////////////////////////////////////////////////
+    // CSS RULE
     ($list:expr, $key:ident : $val:expr, $($rest:tt)*) => {
         $list.push(
             Style::Style {
                 property: String::from(stringify!($key)),
-                value: $val,
-            }
-        );
-        style_properties_only_arguments!(
-            $list,
-            $($rest)*
-        );
-    };
-    ($list:expr, $key:ident :: $val:tt, $($rest:tt)*) => {
-        $list.push(
-            Style::Style {
-                property: String::from(stringify!($key)),
-                value: CssValue(String::from(
-                    stringify!($val)
-                )),
+                value: $val.stringify(),
             }
         );
         style_properties_only_arguments!(
@@ -154,18 +136,11 @@ macro_rules! style_properties_only_arguments {
     ///////////////////////////////////////////////////////////////////////////
     // SINGLE
     ///////////////////////////////////////////////////////////////////////////
-    ($list:expr, $key:ident :: $val:tt) => {
-        $list.push(Style::Style {
-            property: String::from(stringify!($key)),
-            value: CssValue(String::from(
-                stringify!($val)
-            )),
-        });
-    };
+    // CSS RULE
     ($list:expr, $key:ident : $val:expr) => {
         $list.push(Style::Style {
             property: String::from(stringify!($key)),
-            value: $val,
+            value: $val.stringify(),
         });
     };
     
@@ -195,7 +170,7 @@ macro_rules! view_arguments {
     ///////////////////////////////////////////////////////////////////////////
     // MANY - CSS
     ///////////////////////////////////////////////////////////////////////////
-    // CSS DECLARATION
+    // CSS RULE
     ($node:expr, $key:ident : $val:expr, $($rest:tt)*) => {
         view_argument!($node, $key : $val);
         view_arguments!(
@@ -203,13 +178,7 @@ macro_rules! view_arguments {
             $($rest)*
         );
     };
-    ($node:expr, $key:ident :: $val:tt, $($rest:tt)*) => {
-        view_argument!($node, $key :: $val);
-        view_arguments!(
-            $node,
-            $($rest)*
-        );
-    };
+    // CSS PSEUDO-CLASS
     ($node:expr, : $key:ident $val:tt, $($rest:tt)*) => {
         view_argument!($node, : $key $val);
         view_arguments!(
