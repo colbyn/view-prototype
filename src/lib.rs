@@ -11,6 +11,7 @@ pub mod view_macro;
 pub mod css;
 pub mod cssom;
 pub mod html;
+pub mod sync;
 
 #[wasm_bindgen]
 pub fn main() -> Result<(), JsValue> {

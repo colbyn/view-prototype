@@ -103,7 +103,12 @@ where
         }
     }
     pub fn sync(&self, new: Html<Msg>) {
-        self.active_vnode.borrow_mut().sync(&mut new.clone(), &self.view_mount);
+        let root_id = self.active_vnode.borrow().id().expect("missing id on root node");
+        self.active_vnode.borrow_mut().sync(
+            &mut new.clone(),
+            root_id,
+            &self.style_mount,
+        );
     }
     pub fn tick(&self) {
         // UPDATE MODEL
@@ -172,22 +177,22 @@ pub mod app {
     use super::*;
     #[macro_use]
     use super::super::*;
-
+    
     #[derive(Debug, PartialEq, Clone, Hash)]
     pub enum CounterMsg {
         Increment,
         Decrement,
     }
-
+    
     #[derive(Debug, PartialEq, Clone, Hash)]
     pub struct Counter {
         value: i32,
     }
-
+    
     pub fn init() -> Counter {
         Counter {value: 0}
     }
-
+    
     pub fn update(counter: &mut Counter, msg: CounterMsg) {
         match msg {
             CounterMsg::Increment => {
@@ -198,33 +203,41 @@ pub mod app {
             }
         }
     }
-
-
+    
+    
     pub fn view(counter: &Counter) -> Html<CounterMsg> {view!(
         display: "flex",
         flex_direction: "column",
         width: "60%",
         margin: "0 auto",
         h1(
+            :hover (
+                font_size: "8em",
+                color: "#848484"
+            ),
             display: "flex",
             justify_content: "center",
-            font_size: "3em",
             font_family: "monospace",
+            font_size: "5em",
+            padding: "0",
+            margin: "0",
             color: "#444",
+            transition_duration: "0.5s",
+            transition_timing_function: "ease",
             text(format!("{}", counter.value))
         ),
         button(
             padding: "14px",
             margin: "12px",
             border_radius: "12px",
-            font_size: "1em",
+            font_weight: "bolder",
+            font_size: "2em",
             text_transform: "uppercase",
-            color: "#8e8e8e",
             outline: "none",
             user_select: "none",
-            :hover (
-                color: "#000"
-            ),
+            border: "1px solid #676767",
+            background_color: "#676767",
+            color: "#fff",
             .click(|event| CounterMsg::Increment),
             text("Increment")
         ),
@@ -232,14 +245,14 @@ pub mod app {
             padding: "14px",
             margin: "12px",
             border_radius: "12px",
-            font_size: "1em",
+            font_weight: "bolder",
+            font_size: "2em",
             text_transform: "uppercase",
-            color: "#8e8e8e",
             outline: "none",
             user_select: "none",
-            :hover (
-                color: "#000"
-            ),
+            border: "1px solid #676767",
+            background_color: "#676767",
+            color: "#fff",
             .click(|event| CounterMsg::Decrement),
             text("Decrement")
         )

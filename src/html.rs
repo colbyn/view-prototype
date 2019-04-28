@@ -19,6 +19,20 @@ use wasm_bindgen::closure::Closure;
 use crate::css;
 use crate::css::CssValue;
 use crate::cssom::*;
+use crate::sync;
+use crate::sync::Patch;
+
+
+///////////////////////////////////////////////////////////////////////////////
+// INTERNAL UTILS
+///////////////////////////////////////////////////////////////////////////////
+
+fn calculate_hash<T: Hash>(t: &T) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish()
+}
 
 
 
@@ -198,7 +212,7 @@ pub enum Html<Msg> {
     }
 }
 
-impl<Msg> Html<Msg> {
+impl<Msg: Clone + Debug> Html<Msg> {
     ///////////////////////////////////////////////////////////////////////////
     // INTERNAL HELPERS
     ///////////////////////////////////////////////////////////////////////////
@@ -321,30 +335,89 @@ impl<Msg> Html<Msg> {
         }
         messages
     }
+    ///////////////////////////////////////////////////////////////////////////
+    // COMPUTE DIFF
+    ///////////////////////////////////////////////////////////////////////////
+    fn diff(&self, new: &Html<Msg>, parent_id: String) -> Vec<Patch<Msg>> {
+        let mut results: Vec<Patch<Msg>> = Vec::new();
+        match (self, new) {
+            (Html::Node{children: cs1, styling: s1, ..}, Html::Node{children: cs2, styling: s2, ..}) => {
+                if cs1.len() == cs2.len() {
+                    let current_id = self.id().expect("should have an id");
+                    for (c1, c2) in cs1.into_iter().zip(cs2.into_iter()) {
+                        results.append(&mut c1.diff(c2, current_id.clone()));
+                    }
+                } else {
+                    results.push(Patch::SetChildren{
+                        id: self.id().expect("missing id"),
+                        value: cs2.clone(),
+                    });
+                }
+            }
+            (Html::Text{value: v1}, Html::Text{value: v2}) => {
+                if v1 != v2 {
+                    results.push(Patch::SetChildText {
+                        parent_id: parent_id.clone(),
+                        value: v2.clone(),
+                    });
+                }
+            }
+            _ => {
+                results.push(Patch::SetNode{
+                    id: self.id().expect("missing id"),
+                    value: new.clone()
+                });
+            }
+        }
+        results
+    }
+    fn apply_diff(&mut self, changes: &Vec<Patch<Msg>>, style_mount: &StyleMount) {
+        let live = self.get_live();
+        let self_patches = match self.id() {
+            None => Vec::new(),
+            Some(id) => sync::get_patches_with_id(changes, id)
+        };
+        match self {
+            Html::Node{children, styling, ..} => {
+                // UPDATE SELF
+                let live = live.expect("unable to get dom ref");
+                for patch in self_patches {
+                    match patch {
+                        Patch::SetChildText{value, ..} => {
+                            live.set_text_content(Some(value.as_str()));
+                            let mut new_children: Vec<Html<Msg>> = vec![Html::Text{value: value.clone()}];
+                            *children = new_children;
+                        },
+                        Patch::SetChildren{value, ..} => {
+                            
+                        },
+                        Patch::SetNode{value, ..} => {
+                            
+                        },
+                    }
+                }
+                // UPDATE CHILDREN
+                for child in children {
+                    child.apply_diff(changes, style_mount);
+                }
+            },
+            Html::Text{value} => ()
+        }
+    }
     
     
     ///////////////////////////////////////////////////////////////////////////
     // SYNC VIEW CHANGES
     ///////////////////////////////////////////////////////////////////////////
-    pub fn sync(&mut self, new: &mut Html<Msg>, parent_ref: &web_sys::Element) {
-        let live = self.get_live();
-        match (self, new) {
-            (Html::Node{children: cs1, ..}, Html::Node{children: cs2, ..}) => {
-                let live = live.expect("failed to get live dom ref");
-                if cs1.len() == cs2.len() {
-                    for (c1, c2) in cs1.iter_mut().zip(cs2.iter_mut()) {
-                        c1.sync(c2, &live);
-                    }
-                }
-            },
-            (Html::Text{value: v1}, Html::Text{value: v2}) => {
-                if v1 != v2 {
-                    parent_ref.set_text_content(Some(v2.as_str()));
-                    *v1 = v2.clone();
-                }
-            },
-            _ => ()
-        }
+    pub fn sync(
+        &mut self,
+        new: &mut Html<Msg>,
+        parent_id: String,
+        style_mount: &StyleMount
+    ) {
+        let patches = self.diff(new, parent_id);
+        // console::log_1(&JsValue::from(format!("{:#?}", patches)));
+        self.apply_diff(&patches, style_mount);
     }
     
     
