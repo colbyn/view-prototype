@@ -81,7 +81,7 @@ macro_rules! view_argument {
     ($node:expr, . $key:ident ($value:expr)) => {
         $node.add_event_handler(
             String::from(stringify!($key)),
-            Handler(Rc::new($value)),
+            Rc::new($value),
         );
     };
     
@@ -109,7 +109,7 @@ macro_rules! view_argument {
     };
     // NODE
     ($node:expr, $key:ident ($($body:tt)*)) => {{
-        let inner: Html = view!($key| $($body)*);
+        let inner = view!($key| $($body)*);
         $node.add_child(inner);
     }};
 }

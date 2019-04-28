@@ -9,6 +9,8 @@ use wasm_bindgen::JsValue;
 pub mod core;
 pub mod view_macro;
 pub mod css;
+pub mod cssom;
+pub mod html;
 
 #[wasm_bindgen]
 pub fn main() -> Result<(), JsValue> {
