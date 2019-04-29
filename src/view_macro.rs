@@ -99,12 +99,7 @@ macro_rules! view_argument {
     // EMPTY NODE
     ($node:expr, $key:ident ()) => {
         $node.add_child(
-            Node::Node {
-                tag: String::from(stringify!($key)),
-                attributes: Vec::new(),
-                styling: Vec::new(),
-                children: Vec::new(),
-            }
+            Html::new_node(String::from(stringify!($key)))
         );
     };
     // NODE

@@ -179,83 +179,45 @@ pub mod app {
     use super::super::*;
     
     #[derive(Debug, PartialEq, Clone, Hash)]
-    pub enum CounterMsg {
-        Increment,
-        Decrement,
+    pub enum Page {
+        Content,
+        Account
     }
     
     #[derive(Debug, PartialEq, Clone, Hash)]
-    pub struct Counter {
-        value: i32,
+    pub enum CmsMsg {
+        UrlRequest(Page),
+        UrlChange(Page),
     }
     
-    pub fn init() -> Counter {
-        Counter {value: 0}
+    #[derive(Debug, PartialEq, Clone, Hash)]
+    pub struct Cms {
+        page: Page,
     }
     
-    pub fn update(counter: &mut Counter, msg: CounterMsg) {
-        match msg {
-            CounterMsg::Increment => {
-                counter.value = counter.value + 1;
-            }
-            CounterMsg::Decrement => {
-                counter.value = counter.value - 1;
-            }
-        }
+    pub fn init() -> Cms {
+        Cms {page: Page::Content}
+    }
+    
+    pub fn update(counter: &mut Cms, msg: CmsMsg) {
+        // match msg {
+        //     CmsMsg::Increment => {
+        //         counter.value = counter.value + 1;
+        //     }
+        //     CmsMsg::Decrement => {
+        //         counter.value = counter.value - 1;
+        //     }
+        // }
     }
     
     
-    pub fn view(counter: &Counter) -> Html<CounterMsg> {view!(
+    pub fn view(counter: &Cms) -> Html<CmsMsg> {view!(
         display: "flex",
         flex_direction: "column",
-        width: "60%",
-        margin: "0 auto",
-        h1(
-            :hover (
-                font_size: "8em",
-                color: "#848484"
-            ),
-            display: "flex",
-            justify_content: "center",
-            font_family: "monospace",
-            font_size: "5em",
-            padding: "0",
-            margin: "0",
-            color: "#444",
-            transition_duration: "0.5s",
-            transition_timing_function: "ease",
-            text(format!("{}", counter.value))
-        ),
-        button(
-            padding: "14px",
-            margin: "12px",
-            border_radius: "12px",
-            font_weight: "bolder",
-            font_size: "2em",
-            text_transform: "uppercase",
-            outline: "none",
-            user_select: "none",
-            border: "1px solid #676767",
-            background_color: "#676767",
-            color: "#fff",
-            .click(|event| CounterMsg::Increment),
-            text("Increment")
-        ),
-        button(
-            padding: "14px",
-            margin: "12px",
-            border_radius: "12px",
-            font_weight: "bolder",
-            font_size: "2em",
-            text_transform: "uppercase",
-            outline: "none",
-            user_select: "none",
-            border: "1px solid #676767",
-            background_color: "#676767",
-            color: "#fff",
-            .click(|event| CounterMsg::Decrement),
-            text("Decrement")
-        )
+        nav(ul(
+            li(text("content")),
+            li(text("account"))
+        ))
     )}
 }
 

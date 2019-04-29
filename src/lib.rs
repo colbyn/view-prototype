@@ -12,11 +12,13 @@ pub mod css;
 pub mod cssom;
 pub mod html;
 pub mod sync;
+pub mod effect;
 
 #[wasm_bindgen]
 pub fn main() -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
-    core::test();
+    // core::test();
+    effect::nav::test();
     Ok(())
 }
 
